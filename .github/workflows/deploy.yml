@@ -13,21 +13,22 @@ jobs:
       uses: actions/checkout@v3
 
     - name: Build Docker Image
-      run: docker build -t vikas9831/iot-node-app .
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/iot-node-app .
 
     - name: Login to DockerHub
       run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
     - name: Push Docker Image
-      run: docker push vikas9831/iot-node-app
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/iot-node-app
 
     - name: Deploy to IoT Device
       uses: appleboy/ssh-action@v1.0.0
       with:
         host: ${{ secrets.DEVICE_IP }}
-        username: pi
+        username: iiot
         key: ${{ secrets.SSH_KEY }}
         script: |
-          docker pull vikas9831/iot-node-app
-          docker stop iot-node-app || true && docker rm iot-node-app || true
-          docker run -d -p 3000:3000 --name iot-node-app vikas9831/iot-node-app
+          docker pull ${{ secrets.DOCKER_USERNAME }}/iot-node-app
+          docker stop iot-node-app || true
+          docker rm iot-node-app || true
+          docker run -d -p 3000:3000 --name iot-node-app ${{ secrets.DOCKER_USERNAME }}/iot-node-app
