@@ -3,23 +3,66 @@ name: CI/CD for IoT Node App
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  build-test-deploy:
+  test-and-lint:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Build Docker Image
-      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/iot-node-app .
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm ci
+
+    - name: Run Linter
+      run: npm run lint || true
+
+    - name: Run Tests
+      run: npm test
+
+  security-scan:
+    needs: test-and-lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Run Security Scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  build-and-deploy:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
 
     - name: Login to DockerHub
-      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Push Docker Image
-      run: docker push ${{ secrets.DOCKER_USERNAME }}/iot-node-app
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: ${{ secrets.DOCKER_USERNAME }}/iot-node-app:latest
 
     - name: Deploy to IoT Device
       uses: appleboy/ssh-action@v1.0.0
@@ -28,7 +71,12 @@ jobs:
         username: iiot
         key: ${{ secrets.SSH_KEY }}
         script: |
-          docker pull ${{ secrets.DOCKER_USERNAME }}/iot-node-app
+          docker pull ${{ secrets.DOCKER_USERNAME }}/iot-node-app:latest
           docker stop iot-node-app || true
           docker rm iot-node-app || true
-          docker run -d -p 3000:3000 --name iot-node-app ${{ secrets.DOCKER_USERNAME }}/iot-node-app
+          docker run -d \
+            -p 3000:3000 \
+            --name iot-node-app \
+            --restart unless-stopped \
+            -e NODE_ENV=production \
+            ${{ secrets.DOCKER_USERNAME }}/iot-node-app:latest
